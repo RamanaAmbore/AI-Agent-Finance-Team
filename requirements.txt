@@ -1,0 +1,7 @@
+pandas
+yfinance
+datetime
+crewai
+langchain_groq
+numpy
+streamlit
