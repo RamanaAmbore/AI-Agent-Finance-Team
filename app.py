@@ -1,126 +1,123 @@
-import streamlit as st
+from phi.agent import Agent
 
-import plotly.graph_objects as go
-import yfinance as yf
-from phi.agent.agent import Agent
-from phi.model.groq import Groq
-from phi.tools.yfinance import YFinanceTools
+from phi.storage.agent.sqlite import SqlAgentStorage
+from dotenv import load_dotenv
 from phi.tools.duckduckgo import DuckDuckGo
-from phi.tools.googlesearch import GoogleSearch
+from phi.tools.yfinance import YFinanceTools
+import streamlit as st
+load_dotenv()
+from phi.model.groq import Groq
+from phi.model.xai import xAI
 
-from styles import style
-
-COMMON_STOCKS = {
-    'NVIDIA': 'NVDA', 'APPLE': 'AAPL', 'GOOGLE': 'GOOGL', 'MICROSOFT': 'MSFT',
-    'TESLA': 'TSLA', 'AMAZON': 'AMZN', 'META': 'META', 'NETFLIX': 'NFLX',
-    'TCS': 'TCS.NS', 'RELIANCE': 'RELIANCE.NS', 'INFOSYS': 'INFY.NS',
-    'WIPRO': 'WIPRO.NS', 'HDFC': 'HDFCBANK.NS', 'TATAMOTORS': 'TATAMOTORS.NS',
-    'ICICIBANK': 'ICICIBANK.NS', 'SBIN': 'SBIN.NS'
-}
-
-st.set_page_config(page_title="Stocks Analysis AI Agents", page_icon="", layout="wide")
-
-st.markdown(style, unsafe_allow_html=True)
-
-
-def initialize_agents():
-    if 'first_time' not in st.session_state:
-        try:
-            st.session_state.web_agent = Agent(
-                name="Web Search Agent",
-                role="Search the web for information",
-                model=Groq(),
-                tools=[GoogleSearch(fixed_max_results=5), DuckDuckGo(fixed_max_results=5)]
-            )
-            st.session_state.finance_agent = Agent(
-                name="Financial AI Agent",
-                role="Providing financial insights",
-                model=Groq(),
-                tools=[YFinanceTools()]
-            )
-            st.session_state.multi_ai_agent = Agent(
-                name='Stock Market Agent',
-                role='Stock market analysis specialist',
-                model=Groq(),
-                team=[st.session_state.web_agent, st.session_state.finance_agent]
-            )
-            st.session_state.agents_initialized = True
-            return True
-        except Exception as e:
-            st.error(f"Agent initialization error: {str(e)}")
-            return False
-    st.session_state.first_time = True
-
-
-def get_stock_data(symbol):
-    try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        hist = stock.history(period="1y")
-        return info, hist
-    except Exception as e:
-        st.error(f"Error fetching data: {str(e)}")
-        return None, None
-
-
-def create_price_chart(hist_data, symbol):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=hist_data.index, open=hist_data['Open'],
-        high=hist_data['High'], low=hist_data['Low'],
-        close=hist_data['Close'], name='OHLC'
-    ))
-    fig.update_layout(
-        title=f'{symbol} Price Movement',
-        template='plotly_white',
-        xaxis_rangeslider_visible=False,
-        height=500
+web_agent = Agent(
+        name="Web Agent",
+        role="Searching the web for real-timeabout companies, and public sentiment.",
+        model=Groq(id="llama-3.3-70b-versatile"),
+        tools=[DuckDuckGo()],
+        instructions=["Search for the latest news articles, social media trends, and public discussions related to the user's query.\n" +
+                    "Respond in JSON format only, no additional text" +
+                    "{['symbol': 'The company stock ticker','score': Impact estimation (-10 to +10) based on the company stock price.,'event_summary': 'A brief description of the event.'}]}"],
+        storage=SqlAgentStorage(table_name="web_agent", db_file="agents.db"),
+        add_history_to_messages=False,
+        markdown=False,
     )
-    return fig
 
 
-def main():
+finance_agent = Agent(
+        name="Finance Agent",
+        role="Accessing and analyzing financial data and trends from structured finance databases.",
+        model=Groq(id="llama-3.3-70b-versatile"),
+        tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True)],
+        instructions=["Use financial tools (e.g., Yahoo Finance) to gather stock prices, company-specific news, and analyst recommendations.\n" +
+                    "Respond in JSON format only, no additional text:\n" +
+                    "{['symbol': 'The company stock ticker','score': Impact estimation (-10 to +10) based on the company stock price.,'event_summary': 'Include quantitative data relevant to the user query.'}]}"],
+        storage=SqlAgentStorage(table_name="finance_agent", db_file="agents.db"),
+        add_history_to_messages=False,
+        markdown=False,
+    )
 
-    st.title("Stocks Analysis AI Agents")
+grok_agent = Agent(
+        name="Grok Agent",
+        role="Combining web search and x.com data.",
+        model=xAI(id="grok-beta"),
+        tools=[DuckDuckGo()],
+        instructions=["Use both web tools and x.com public tweets to gather a comprehensive view of trends, and sentiment.\n" +
+                    "Respond in JSON format only, no additional text:\n" +
+                    "{['symbol': 'The company stock ticker','score': Impact estimation (-10 to +10) based on the event's likely effect on the company stock price.,'event_summary': 'Combine news and data.'}]}"],
+        show_tool_calls=False,
+        markdown=False,
+    )
 
-    stock_input = st.text_input("Enter Company Name", help="e.g., APPLE, TCS")
+agent_team = Agent(
+        team=[web_agent, finance_agent, grok_agent],
+        name="Agents Team",
+        role="Orchestrating tasks across specialized agents to produce the most accurate and comprehensive responses.",
+        instructions=["Delegate tasks based on prompt requirements:\n" +
+                    "Web Agent: For real-time news and sentiment analysis.\n" +
+                    "Finance Agent: For financial data and analytics.\n" +
+                    "Grok Agent: For tunring insights into a well-structured response.\n" +
+                    "Respond in JSON format only, no additional text:\n" +
+                    "{\n" +
+                    '   "symbol": "TICKER",\n' +
+                    '   "score": NUMBER_BETWEEN_NEGATIVE_10_AND_10,\n' +
+                    '   "event_summary": "SUMMARY",\n' +
+                    '   "analysis": {\n' +
+                    '       "web_insights": "WEB_FINDINGS",\n' +
+                    '       "financial_data": "FINANCIAL_METRICS",\n' +
+                    '       "combined_web_analysis": "SYNTHESIS"\n' +
+                    "    }\n" +
+                    "}\n" +
+                    "Deduplicate or reconcile overlapping findings.\n" +
+                    "Provide a clear, actionable summary for the user."],
+        show_tool_calls=False,
+        markdown=False,
+    )
 
-    if st.button("Analyze", use_container_width=True):
-        if not stock_input:
-            st.error("Please enter a stock name")
-            return
+# Streamlit App
+st.title("AI Agent Finance Team")
+st.write("Interact with your AI agents to get financial data and web search results.")
 
-        symbol = COMMON_STOCKS.get(stock_input.upper()) or stock_input
+# User input
+user_query = st.text_input("Enter your query:")
 
-        if initialize_agents():
-            with st.spinner("Analyzing..."):
-                info, hist = get_stock_data(symbol)
+# Dropdown to select the agent
+agent_selection = st.selectbox(
+    "Select an Agent",
+    options=["Web Agent", "Finance Agent", "Grok Agent", "Agents Team"],
+)
 
-                if info and hist is not None:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown(
-                            f"<div class='card'><div class='metric-value'>${info.get('currentPrice', 'N/A')}</div><div class='metric-label'>Current Price</div></div>",
-                            unsafe_allow_html=True)
-                    with col2:
-                        st.markdown(
-                            f"<div class='card'><div class='metric-value'>{info.get('forwardPE', 'N/A')}</div><div class='metric-label'>Forward P/E</div></div>",
-                            unsafe_allow_html=True)
-                    with col3:
-                        st.markdown(
-                            f"<div class='card'><div class='metric-value'>{info.get('recommendationKey', 'N/A').title()}</div><div class='metric-label'>Recommendation</div></div>",
-                            unsafe_allow_html=True)
+# Agent map
+agent_map = {
+    "Web Agent": web_agent,
+    "Finance Agent": finance_agent,
+    "Grok Agent": grok_agent,
+    "Agents Team": agent_team,
+}
+# monitor announcments of new tech products and which are generating buzz today
+if st.button("Submit Query"):
+    if user_query.strip():
+        selected_agent = agent_map[agent_selection]
+        # prompt = agent_team.generate_prompt(selected_agent.name, user_query)
+        response = selected_agent.run(user_query)
+        print(response)
 
-                    st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-                    st.plotly_chart(create_price_chart(hist, symbol), use_container_width=True)
+        try:
+            # Process response and send to Discord
+            # response_content = agent_team.process_and_send_response(
+            #     response,
+            #     selected_agent.name
+            # )
 
+            # Debug: Show extracted text
+            st.write("Extracted text:")
+            st.write(response)
 
-                    if 'longBusinessSummary' in info:
-                        st.markdown("<div class='card'>", unsafe_allow_html=True)
-                        st.markdown("### Company Overview")
-                        st.write(info['longBusinessSummary'])
-                        st.markdown("</div>", unsafe_allow_html=True)
+            # Show Discord status
+            st.success("Results sent to Discord successfully!")
 
-
-if __name__ == "__main__":
-    main()
+        except Exception as e:
+            st.error(f"Error processing response: {str(e)}")
+            st.text("Raw response:")
+            st.text(response)
+    else:
+        st.warning("Please enter a query before submitting.")
