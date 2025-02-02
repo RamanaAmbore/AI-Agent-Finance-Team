@@ -3,3 +3,4 @@ yfinance
 streamlit
 phidata
 python-dotenv
+sqlalchemy
