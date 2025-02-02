@@ -5,3 +5,4 @@ phidata
 python-dotenv
 sqlalchemy
 duckduckgo-search
+groq
