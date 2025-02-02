@@ -4,3 +4,4 @@ streamlit
 phidata
 python-dotenv
 sqlalchemy
+duckduckgo-search
